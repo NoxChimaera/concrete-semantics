@@ -390,12 +390,146 @@ lemma is_dnf_and [simp]: "is_dnf l \<Longrightarrow> is_dnf r \<Longrightarrow> 
   apply auto
   done
 
-value "dnf_and (VAR []) (AND (VAR []) (OR (VAR []) (VAR [])))"
-
 lemma "is_nnf a \<Longrightarrow> is_dnf (dnf_of_nnf a)"
   apply (induction a)
   apply (auto)
   done
 
+(* 3.3 Stack machine and compilation *)
+(* Stack-machine control expression. *)
+datatype instr = LOADI val | LOAD vname | ADD
+
+type_synonym stack = "val list"
+
+(*
+fun exec1 :: "instr \<Rightarrow> state \<Rightarrow> stack \<Rightarrow> stack" where
+  "exec1 (LOADI n) _ stk = n # stk" |
+  "exec1 (LOAD x) s stk = s(x) # stk" |
+  "exec1 ADD _ (j # i # stk) = (i + j) # stk"
+
+fun exec :: "instr list \<Rightarrow> state \<Rightarrow> stack \<Rightarrow> stack" where
+  "exec [] _ stk = stk" |
+  "exec (i # is) s stk = exec is s (exec1 i s stk)"
+value "exec [LOADI 5, LOAD ''y'', ADD] ((\<lambda>x. 0) (''x'':=42, ''y'':=43)) [50]"
+
+fun comp :: "aexp \<Rightarrow> instr list" where
+  "comp (N n) = [LOADI n]" |
+  "comp (V x) = [LOAD x]" |
+  "comp (Plus l r) = comp l @ comp r @ [ADD]"
+
+lemma exec_chain [simp]: "exec (l @ r) s stk = exec r s (exec l s stk)"
+  apply (induction l arbitrary: stk)
+  apply auto
+  done
+
+lemma "exec (comp a) s stk = aval a s # stk"
+  apply (induction a arbitrary: stk)
+  apply auto
+  done
+*)
+
+(* Ex. 3.10 *)
+fun exec1 :: "instr \<Rightarrow> state \<Rightarrow> stack \<Rightarrow> stack option" where
+  "exec1 (LOADI n) _ stk = Some (n # stk)" |
+  "exec1 (LOAD x) s stk = Some (s(x) # stk)" |
+  "exec1 ADD _ (j # i # stk) = Some ((i + j) # stk)" |
+  "exec1 ADD _ stk = None"
+
+fun exec :: "instr list \<Rightarrow> state \<Rightarrow> stack \<Rightarrow> stack option" where
+  "exec [] _ stk = Some stk" |
+  "exec (i # is) s stk = (case (exec1 i s stk) of
+    Some newStack \<Rightarrow> exec is s newStack |
+    None \<Rightarrow> None)"
+
+fun comp :: "aexp \<Rightarrow> instr list" where
+  "comp (N n) = [LOADI n]" |
+  "comp (V x) = [LOAD x]" |
+  "comp (Plus l r) = comp l @ comp r @ [ADD]"
+
+lemma exec_chain [simp]: "exec l s stk = Some newStack \<Longrightarrow> exec (l @ r) s stk = exec r s newStack"
+  apply (induction l arbitrary: stk)
+  apply (auto split: option.split)
+  done
+
+lemma "exec (comp a) s stk = Some (aval a s # stk)"
+  apply (induction a arbitrary: stk)
+  apply (auto)
+  done
+
+(* Ex. 3.11 *)
+type_synonym reg = nat
+type_synonym rstate = "reg \<Rightarrow> val"
+
+(* Represents a register machine instructions. *)
+datatype instrreg = LDI val reg | LD vname reg | ADDREG reg reg
+
+fun exec1reg :: "instrreg \<Rightarrow> state \<Rightarrow> rstate \<Rightarrow> rstate" where
+  "exec1reg (LDI n r) s rs = rs(r := n)" |
+  "exec1reg (LD x r) s rs = rs(r := s(x))" |
+  "exec1reg (ADDREG l r) s rs = rs(l := rs(l) + rs(r))"
+
+fun execreg :: "instrreg list \<Rightarrow> state \<Rightarrow> rstate \<Rightarrow> rstate" where
+  "execreg [] _ rs = rs" |
+  "execreg (i # is) s rs = execreg is s (exec1reg i s rs)"
+
+fun compreg :: "aexp \<Rightarrow> reg \<Rightarrow> instrreg list" where
+  "compreg (N n) r = [LDI n r]" |
+  "compreg (V x) r = [LD x r]" |
+  "compreg (Plus l r) reg = (compreg l reg) @ (compreg r (reg + 1)) @ [ADDREG reg (reg + 1)]"
+
+lemma execreg_chain [simp]: "execreg (l @ r) s rs = execreg r s (execreg l s rs)"
+  apply (induction l arbitrary: rs)
+  apply auto
+  done
+
+value "execreg (compreg (Plus (N 1) (N 2)) 4) (\<lambda>x. 0) (\<lambda>x. 0) 4"
+
+lemma register_seq [simp]: "l < r \<Longrightarrow> execreg (compreg a r) s rs l = rs l"
+  apply (induction a arbitrary: rs l r)
+  apply auto
+  done
+
+lemma "execreg (compreg a r) s rs r = aval a s" 
+  apply (induction a arbitrary: rs r)
+  apply auto
+  done
+
+(* Ex. 3.12 *)
+(* Register machine with register-accumulator. *)
+datatype instr0 = LDI0 val | LD0 vname | MV0 reg | ADD0 reg
+
+fun exec10 :: "instr0 \<Rightarrow> state \<Rightarrow> rstate \<Rightarrow> rstate" where
+  "exec10 (LDI0 n) s rs = rs(0 := n)" |
+  "exec10 (LD0 v) s rs = rs(0 := s(v))" |
+  "exec10 (MV0 r) s rs = rs(r := rs(0))" |
+  "exec10 (ADD0 r) s rs = rs(0 := (rs 0 + rs r))"
+
+fun exec0 :: "instr0 list \<Rightarrow> state \<Rightarrow> rstate \<Rightarrow> rstate" where
+  "exec0 [] _ rs = rs" |
+  "exec0 (i # is) s rs = exec0 is s (exec10 i s rs)"
+
+fun comp0 :: "aexp \<Rightarrow> reg \<Rightarrow> instr0 list" where
+  "comp0 (N n) r = [LDI0 n]" |
+  "comp0 (V x) r = [LD0 x]" |
+  "comp0 (Plus p q) r = (comp0 p (r+1)) @ [MV0 (r+1)] @ (comp0 q (r+2)) @ [ADD0 (r+1)]"
+
+value "comp0 (Plus (Plus (N 1) (N 2)) ((N 3))) 1"
+
+lemma exec0_chain [simp]: "exec0 (l @ r) s rs = exec0 r s (exec0 l s rs)"
+  apply (induction l arbitrary: rs)
+  apply auto
+  done
+
+value "exec0 (comp0 (N 0) 1) (\<lambda>x. -1) (\<lambda>r. 0) 0"
+
+lemma exec0_seq [simp]: "0 < l \<Longrightarrow> l < r \<Longrightarrow> exec0 (comp0 a r) s rs l = rs l"
+  apply (induction a arbitrary: rs l r)
+  apply auto
+  done
+
+lemma "exec0 (comp0 a r) s rs 0 = aval a s"
+  apply (induction a arbitrary: rs r)
+  apply auto
+  done
 
 end
